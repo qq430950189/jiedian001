@@ -1,5 +1,4 @@
 ---
-tags: []
 created: '2025-03-08'
 title: '2025-03-08 updated'
 ---
