@@ -9362,3 +9362,419 @@ TCP 443：NaïveProxy 或 REALITY/Vision
  IPv4 目标：由服务端 NATv4/NAT64 出站解决
 
 这是在隐蔽性、性能、UDP 可用性、TCP 回退和单端口故障隔离之间最均衡的结构。最不推荐的是“单一 IP、单一 TCP 443、单一私有协议、长期高流量且没有任何备用通道”的部署方式。
+
+
+基于仓库内容与公开资料的协议组合研究
+
+我重新检查了你提供的 readme.txt 地址、对应的 GitHub 仓库，并交叉核对 Xray-core、sing-box 官方文档和 GFW Report 的公开测量。下面按“443 仅 IPv6”“非 443 公网 IPv6”“非 443 IPv6/NAT IPv4”三个环境，系统梳理适合的协议、可组合方式、性能、伪装和当前封锁压力。
+
+**重要说明：**当前仓库公开文件列表中只有 README.md、两个 Clash 配置和一个中文配置文件，没有显示 readme.txt；原始文件地址在当前访问环境中也未返回正文。因此，我无法逐字引用该文件中的菜单或节点列表。仓库目前被描述为一个自用节点配置仓库，包含 Clash 配置文件，而非完整的多协议安装脚本仓库。
+ 为避免遗漏，我以下按照该类 sing-box 全家桶通常支持的 Reality、Hysteria2、TUIC、Trojan、Shadowsocks、AnyTLS、ShadowTLS、VMess、VLESS、Naive 等协议做全集分析。sing-box 官方当前也确实提供这些主要入站类型。
+
+以下属于协议研究和合法远程访问选型，不提供隐蔽部署参数、探测规避脚本或规避监管的具体配置。
+
+一、最关键的网络前提
+1. 443 端口只提供 IPv6
+
+“443 仅 IPv6”意味着：
+
+服务端可以同时使用 TCP/443 和 UDP/443，两者不会端口冲突。
+TCP/443 可运行 Reality、TLS、AnyTLS、Trojan、ShadowTLS 等。
+UDP/443 可运行 Hysteria2 或 TUIC。
+客户端必须具有可用 IPv6，只有 IPv4 的客户端无法直接访问纯 IPv6 服务。
+如果客户端网络的 IPv6 路由质量较差，协议再优秀也可能不如 NAT IPv4 节点稳定。
+
+最有价值的组合不是在 TCP/443 上塞入多个近似协议，而是：
+
+TCP/443：VLESS + Vision + REALITY
+UDP/443：Hysteria2
+
+
+这两个入口在传输层、拥塞控制和流量外观上彼此独立，一个失败时另一个仍可能可用。REALITY 官方只支持 RAW、XHTTP 和 gRPC 三类传输，并可与合适的 Vision 流控配合；Hysteria2 则工作在 QUIC/UDP 上，支持 TLS、HTTP/3 伪装和专用混淆层。
+
+2. 非 443 公网 IPv6
+
+公网 IPv6 原则上可以监听任意开放端口，协议功能不会因为端口不是 443 而发生改变，但流量背景会变化：
+
+TLS 出现在 443、8443、9443 等端口比较自然。
+QUIC/HTTP3 最常见于 UDP/443。
+TLS 或 HTTP/3 出现在随机高位端口并不违法，也不代表必然被识别，但会减少“普通网站流量”的背景掩护。
+如果仅供私人使用，随机端口可以减少普通互联网扫描噪声，但它并不是可靠的抗检测机制。
+
+端口号本身不增加密码学强度。真正影响结果的是握手外观、失败响应、包长时序、连接频率、IP 信誉和线路质量。公开研究已经证明，审查系统能够依据常见协议指纹、比特比例、首包 ASCII 分布等启发式信息分类完全加密流量。
+
+3. 非 443 IPv6/NAT IPv4
+
+NAT IPv4 必须确认三个条件：
+
+服务商映射的是 TCP、UDP，还是二者都有。
+外部端口与服务器内部端口是否相同。
+UDP 映射空闲超时、PPS 和流量限制是多少。
+
+如果只映射 TCP，能够使用：
+
+VLESS + REALITY
+AnyTLS
+Trojan + TLS
+Shadowsocks 2022 + ShadowTLS v3
+VLESS/VMess + WebSocket或gRPC + TLS
+NaiveProxy
+
+如果同时映射 UDP，还可使用：
+
+Hysteria2
+TUIC v5
+
+最新 sing-box 甚至为 Hysteria2 提供 Realm、STUN、NAT 穿透和可选网关端口映射能力，但这些功能不意味着所有运营商级 NAT 都能成功打洞，实际结果仍取决于 NAT 类型和 UDP 策略。
+
+二、适合 TCP/443 的所有主要组合
+1. VLESS + RAW + XTLS Vision + REALITY
+综合评价
+加密安全：高
+TLS 外观：很高
+主动探测抵抗：很高
+CPU 效率：很高
+弱网能力：中等
+客户端覆盖：很高
+推荐级别：第一梯队
+
+REALITY 是一种修改后的 TLS 安全层，利用目标站的 TLS 外观和握手特征进行伪装。鉴权失败的连接会被转发至设置的目标，因此未经认证的扫描者通常不会直接获得一个具有固定异常响应的代理服务。REALITY 官方将 RAW、XHTTP、gRPC 列为支持的传输。
+
+Vision 的主要价值不只是“更快”，还包括减少内层 TLS 业务再被外层 TLS 重复封装时产生的可观察时序。对于网页访问、视频、文件传输等绝大多数内容本来就是 TLS 的场景，RAW + Vision 通常具有最低的额外封装开销。官方文档称，REALITY 配合合适的 Vision 流控可取得显著性能改善，但“数倍或十几倍”是项目方描述，不应理解为所有网络都能达到。
+
+局限
+仍能观察到 VPS IP、连接持续时间、上下行比例和整体流量规模。
+目标站选择不合理可能造成 TLS 行为与服务器网络环境不一致。
+IP 层封锁无法靠协议自身解决。
+TCP 在高 RTT、高丢包链路中仍受拥塞控制和队头阻塞影响。
+将认证失败流量直接转发给目标站可能被扫描者滥用，因此官方提醒需要考虑回落流量限制。
+适用端口
+TCP/443：最适合。
+非 443 TCP：可以使用，但普通 HTTPS 背景相对弱。
+NAT IPv4 TCP 映射端口：适合。
+2. VLESS + XHTTP + REALITY
+综合评价
+加密安全：高
+HTTP 化伪装：很高
+主动探测抵抗：高
+CPU 效率：中高
+复杂网络适应：高
+兼容性：中高
+推荐级别：第一至第二梯队
+
+XHTTP 是更偏 HTTP 化、分流化和复杂链路适配的传输。它可与 REALITY 直连组合，也可以在特定结构中与 TLS、反向代理或 CDN 路径结合。公开的 Xray-core 社区方案展示了 Vision + Reality、XHTTP + Reality、XHTTP + TLS/CDN 等多个入口共存的可能性。
+
+与 RAW + Vision 相比，XHTTP 的优势通常不是单流峰值，而是：
+
+可调整上下行传输形态。
+更接近 HTTP 请求和响应模式。
+更适合存在反向代理、CDN 或中间网络设备的场景。
+对某些限制长连接或特定 TCP 行为的网络更友好。
+
+代价是协议栈更复杂，两端版本、XHTTP 模式、HTTP 版本、反向代理行为都可能影响结果。它不应被笼统理解为“比 RAW 更强”，而应作为 RAW/Vision 之外的复杂网络备用。
+
+3. VLESS + gRPC + REALITY
+综合评价
+加密安全：高
+伪装能力：高
+效率：中等
+多流支持：高
+部署复杂度：中高
+
+gRPC 使用 HTTP/2 语义，适合需要流式 RPC、多路复用或已有 HTTP/2 基础设施的环境。REALITY 官方确认可与 gRPC 组合，但“支持”并不代表它在性能或隐蔽性上一定优于 RAW/Vision。
+
+其额外 HTTP/2 和 gRPC 封装会增加内存、CPU 和调试复杂度。若没有 CDN、反向代理或 HTTP/2 兼容需求，通常优先考虑 RAW/Vision 或 XHTTP。
+
+4. VLESS + WebSocket + TLS
+综合评价
+加密安全：高
+伪装能力：中等
+CDN 兼容：高
+性能效率：中低
+抗直接封 IP：有限
+推荐级别：兼容或 CDN 场景
+
+WebSocket + TLS 最大价值是容易放在标准 Web 服务或传统 CDN 后面，而不是效率或先进性。它需要完整的 TLS 终止、HTTP Upgrade、路径和反向代理链路，因此额外开销通常高于 RAW。
+
+注意 REALITY 官方支持列表是 RAW、XHTTP、gRPC，不包括 WebSocket。因此标准思路是 WebSocket + 正常 TLS，而不是简单写成 WebSocket + REALITY。
+
+5. Trojan + TLS
+综合评价
+加密安全：高
+HTTPS 外观：高
+主动探测抵抗：中高
+效率：中高
+客户端兼容：高
+证书维护：需要
+
+Trojan 依靠标准 TLS 提供机密性和认证，适合部署在 443 或替代 HTTPS 端口。它不像 REALITY 那样借用目标站握手，需要自己的域名和可信证书，或者让客户端明确信任自签证书。
+
+优势是成熟、易理解、客户端覆盖广。弱点是 TLS 行为、证书、SNI、ALPN 和失败回落需要保持一致，否则扫描时可能表现出异常。sing-box 当前仍正式支持 Trojan 入站，因此它不是弃用协议，但新建直连入口时综合抗探测性通常不如配置正确的 REALITY。
+
+6. AnyTLS + TLS
+综合评价
+加密安全：高
+流量填充：高
+多连接效率：高
+主动探测抵抗：中高
+客户端覆盖：中等
+长期实证：较少
+
+AnyTLS 从 sing-box 1.12.0 开始提供入站实现，支持 TLS、认证用户和可配置的 Padding Scheme；出站还支持空闲会话检查、空闲超时和最低空闲会话数。
+
+它的优势是基于正常 TLS 外层，并通过会话及填充机制降低一些简单长度特征。多次短连接业务可以利用既有会话，减少重复握手。
+
+但应避免两个过度结论：
+
+Padding 只会提升统计分析成本，不等于“流量与浏览器完全一致”。
+AnyTLS 较新，缺乏像 Shadowsocks 和 QUIC 审查那样的大规模公开研究，因此抗封锁评分有较大的不确定区间。
+
+建议把它作为 REALITY 之外的异构 TCP 备用，不必在同一服务器上同时开多个 AnyTLS 端口。
+
+7. Shadowsocks 2022 + ShadowTLS v3
+综合评价
+密码学安全：高
+底层效率：很高
+TLS 伪装：高
+组合复杂度：中高
+主动探测抵抗：中高
+客户端覆盖：中等
+
+这里必须区分三个概念：
+
+裸旧版 Shadowsocks。
+Shadowsocks 2022。
+Shadowsocks 2022 外加 ShadowTLS v3。
+
+ShadowTLS 是 TLS 伪装前置层，不是替代 Shadowsocks 传输数据的完整代理协议。sing-box 当前支持 ShadowTLS v1、v2、v3，其中 v3 使用独立用户认证，并可配置握手服务器、严格模式及 SNI 处理。
+
+SS 2022 本身非常轻量，适合作为内层协议；ShadowTLS 则让外部连接更接近 TLS。该组合通常比裸 SS 更适合敌对网络，但层次更多，对客户端兼容、密码匹配、握手目标和失败响应的一致性要求更高。
+
+公开研究已经确认 Shadowsocks、VMess、Obfs4 这类“看起来全是随机字节”的协议可能受到全加密流量启发式检测影响。因此，不能将裸 SS 的高吞吐等同于高隐蔽性。
+
+8. NaiveProxy / Naive 入站
+综合评价
+HTTPS 外观：很高
+浏览器网络栈一致性：高
+性能效率：中等
+资源占用：中高
+生态覆盖：中等
+
+Naive 类方案强调使用成熟 Web/浏览器网络栈，而不是设计一个完全随机化的新协议。这种路线在协议行为真实性方面有优势，但组件更重、内存占用更高，并且客户端数量不如 VLESS、Trojan 或 Hysteria2。sing-box 当前列有 Naive 入站支持。
+
+如果目标是低配 VPS 的峰值吞吐，优先级通常低于 Vision；如果更重视标准 HTTPS 行为，可以作为独立备用方案。
+
+9. VMess + TLS/WS/gRPC
+
+VMess 仍受不少旧客户端和旧面板支持，但不适合作为新部署的首选：
+
+裸 VMess 属全加密随机化流量，公开研究明确把 VMess 列入曾受被动检测影响的协议类型。
+VMess + TLS 能改善外层外观，但依然增加重复封装。
+VMess + WebSocket + TLS 主要价值是传统 CDN 和旧客户端兼容。
+VMess + gRPC + TLS 适合已有 HTTP/2 环境，但复杂度和开销更高。
+三、适合 UDP/443 和非 443/UDP 的协议
+1. Hysteria2
+综合评价
+加密：TLS 1.3/QUIC
+弱网吞吐：很高
+交互延迟：高
+CPU 和电量效率：中等
+UDP 可达性依赖：很高
+伪装能力：中高至高
+推荐级别：UDP 第一选择
+
+Hysteria2 基于 QUIC，主要性能特性是 Brutal 或新版本支持的 BBR 路径。Brutal 根据用户声明带宽维持较积极的发送速率，在高 RTT、一定丢包的线路上可能比传统 TCP 保持更高吞吐，但带宽估计错误会造成严重排队和额外丢包。
+
+当前 sing-box 1.14 文档列出了：
+
+Salamander 或 Gecko 混淆。
+HTTP/3 鉴权失败伪装。
+端口范围和端口跳跃。
+Chrome QUIC 握手指纹模仿。
+BBR 配置档位。
+Realm NAT 穿透。
+443 与非 443 对比
+UDP/443：最符合 HTTP/3 的端口语义。
+高位 UDP：仍可用，适合 NAT 映射，但正常 HTTP/3 背景较少。
+端口跳跃：可以应对单端口 QoS 或故障，但需要一段连续 UDP 映射范围，不适合只给一个 NAT 端口的服务商。
+Realm：适合没有固定公网入口的特殊环境，但增加了会合服务和打洞的不确定性。
+
+sing-box 官方同时提醒，UDP 代理虽然有时没有遭遇同等强度的封锁，但其流量特征可能比 TCP 代理更明显。因此，Hysteria2 适合作为高性能入口，不适合作为唯一入口。
+
+2. TUIC v5
+综合评价
+加密：TLS/QUIC
+多路复用：很高
+交互延迟：高
+弱网吞吐：高
+客户端覆盖：中等
+抗探测实证：中等或偏少
+推荐级别：UDP 第二选择
+
+TUIC 通过 QUIC 复用 TCP 和 UDP 业务，支持 cubic、new_reno 和 BBR 拥塞控制，默认通常为 cubic。它还支持原生 UDP 中继和基于 QUIC 流的可靠中继，但可靠模式会增加开销。
+
+官方文档强烈建议关闭 0-RTT，因为协议已经高度复用，0-RTT 对实际性能帮助有限，却会增加重放风险。这是一个密码学与认证安全问题，不是单纯的“节点会不会被识别”问题。
+
+相比 Hysteria2：
+
+TUIC 更接近通用 QUIC 多路复用代理。
+Hysteria2 对受损线路和激进抢占带宽的优化更鲜明。
+Hysteria2 当前具有更明确的混淆、HTTP/3 伪装和 Chrome QUIC 模仿选项。
+TUIC 的行为相对简洁，但这不自动意味着更像浏览器 QUIC。
+四、443 端口的可行组合全集
+
+由于 TCP 和 UDP 是不同的传输层，以下组合可以共用数字端口 443。
+
+TCP/443	UDP/443	综合评价	适合场景VLESS + Vision + REALITY	Hysteria2	最佳均衡	默认首选
+VLESS + Vision + REALITY	TUIC	很高	偏移动、低延迟
+VLESS + XHTTP + REALITY	Hysteria2	很高	复杂 TCP 网络、弱网
+VLESS + XHTTP + REALITY	TUIC	高	HTTP 化 TCP + 温和 QUIC
+AnyTLS	Hysteria2	高	全 sing-box 技术栈
+AnyTLS	TUIC	中高	新协议组合
+Trojan + TLS	Hysteria2	高	老客户端兼容
+Trojan + TLS	TUIC	中高	成熟 TCP + QUIC
+SS 2022 + ShadowTLS v3	Hysteria2	高	轻量 TCP + 激进弱网
+Naive	Hysteria2	中高	重视 HTTPS 外观
+VMess + WS + TLS	Hysteria2	中	旧客户端兼容
+
+REALITY 可用传输受到 RAW、XHTTP、gRPC 的明确限制，而 Hysteria2 和 TUIC 都需要 UDP。TCP/443 与 UDP/443 共存是网络层面的正常用法，但两个 UDP 协议不能直接同时独占同一个 IP 的 UDP/443。
+
+五、非 443 端口的建议组合
+情形 A：公网 IPv6，有多个自由端口
+
+推荐结构：
+
+TCP/高位端口：VLESS + REALITY 或 AnyTLS
+UDP/高位端口：Hysteria2
+备用 TCP 端口：SS 2022 + ShadowTLS v3
+
+
+这里 REALITY 仍有主动探测处理优势，AnyTLS 负责不同 TLS 技术路线，Hysteria2 负责高丢包和高带宽。ShadowTLS 不必与 AnyTLS 同时作为主入口，否则会增加运维复杂度而没有显著增加网络覆盖。
+
+情形 B：NAT IPv4 只提供一个端口，但同时映射 TCP 和 UDP
+
+最实用的组合是：
+
+TCP/同一端口：VLESS + REALITY
+UDP/同一端口：Hysteria2
+
+
+或者：
+
+TCP/同一端口：AnyTLS
+UDP/同一端口：TUIC
+
+
+这种复用只依赖 TCP 与 UDP 可以使用相同数字端口，不涉及复杂协议分流。
+
+情形 C：NAT IPv4 只有 TCP 映射
+
+推荐顺序：
+
+VLESS + Vision + REALITY
+AnyTLS
+SS 2022 + ShadowTLS v3
+Trojan + TLS
+Naive
+VLESS/VMess + WS + TLS
+情形 D：NAT IPv4 只有 UDP 映射
+
+推荐顺序：
+
+Hysteria2
+TUIC
+
+但这种情况不宜作为唯一节点，因为客户端网络可能禁止或严重限速 UDP。Hysteria2 文档也明确提示 UDP 代理的特征可能比 TCP 更明显。
+
+六、综合评分
+
+评分中的“抗封锁”指协议设计相对强弱，不代表任何固定存活时间。
+
+协议组合	加密完整性	协议外观	主动探测	吞吐效率	弱网	CPU效率	当前压力VLESS + Vision + REALITY	5	5	5	5	3	5	中
+VLESS + XHTTP + REALITY	5	5	5	4	4	4	中
+VLESS + gRPC + REALITY	5	4	4	3	3	3	中
+AnyTLS	5	4	4	4	3	4	未充分测量
+SS 2022 + ShadowTLS v3	5	4	4	5	3	5	中
+Trojan + TLS	5	4	3	4	3	4	中
+Naive	5	5	4	3	3	3	中低
+Hysteria2	5	4	4	5	5	3	中高
+TUIC v5	5	3	3	5	4	3	中高
+VLESS + WS + TLS	5	3	3	3	2	3	中
+VMess + WS + TLS	4	3	3	2	2	3	中高
+裸 SS 2022	5	1	2	5	3	5	高
+裸 VMess	4	1	2	4	3	4	高
+
+REALITY 的外观和失败回落机制构成其高评分基础；Hysteria2 的弱网评价来自 QUIC、多路复用和 Brutal/BBR，但 UDP 流量可达性及可分类性降低了其整体抗封确定性。
+
+七、当前“打击力度”的可靠证据
+1. 全加密随机化协议
+
+2023 年 USENIX Security Symposium 2023 论文确认，GFW 在 2021 年 11 月初部署过实时被动检测完全加密流量的机制，影响范围包括 Shadowsocks、VMess 和 Obfs4。检测不是解密内容，而是先豁免看起来像常见协议的流量，再根据比特比例、可打印字符和位置等特征处理剩余连接。
+
+这意味着“所有字节都随机”不再是理想伪装。裸 SS、裸 VMess 和简单随机混淆的性能可能很好，但长期风险高于具有 TLS、HTTPS 或 HTTP/3 外观的方案。研究估算，如果该启发式机制广泛运行，约有 0.6% 的普通网络连接可能成为误报，因此审查系统也存在误伤与部署范围之间的权衡。
+
+不过，论文附件记录，在 2023 年 3 月 15 日的后续实验中，该动态全加密流量阻断曾停止运行。这说明封锁机制并非永久、全国、全天以固定强度开启，不能把 2021 年的结果简单描述成今天所有地区的固定状态。
+
+2. QUIC 和 UDP 协议
+
+2025 年公开研究确认，GFW 自 2024 年 4 月 7 日起对特定域名实施基于 SNI 的 QUIC 封锁。审查设备能够从 QUIC Initial 包推导初始密钥、检查其中的 TLS ClientHello 和 SNI，并依据独立名单阻断后续 UDP 数据。
+
+这项研究不是“Hysteria2 和 TUIC 已被全面识别”的证据。它研究的是标准 QUIC Initial 与域名 SNI 封锁，而不是所有代理协议的精确分类。但是，它足以证明以下观点已经过时：
+
+“QUIC 首包加密，所以审查设备无法看见或处理 QUIC 握手。”
+
+实际上，研究发现一次特定 SNI 的 QUIC Initial 就能触发约 180 秒的后续阻断，90% 以上被触发的连接在一秒内进入阻断状态；同时封锁率存在地域、时段和负载差异。
+
+因此，Hysteria2 和 TUIC 的现状应表述为：
+
+性能优势仍然成立。
+QUIC 不再是检查盲区。
+协议专用混淆可以使其不再呈现标准 QUIC Initial，但这种流量又会变成另一个可分类对象。
+UDP 的运营商 QoS 和直接丢弃风险高于 TCP。
+不应只部署 UDP 而没有 TCP 备用。
+3. REALITY、AnyTLS 和 ShadowTLS
+
+目前缺乏一个权威、公开、可复现的数据集，可以给出 Reality、AnyTLS 或 ShadowTLS 的平均存活天数。网上“Reality 平均存活多少天”“某协议零封锁”的说法，大多没有控制 IP 历史、自治系统、端口、流量、用户数量和地区等变量。
+
+REALITY 官方只将其描述为当前较安全的传输安全方案之一，并说明其外部形态与普通上网流量具有一致性；这不是“无法识别”的密码学保证。
+
+AnyTLS 和 ShadowTLS 的官方文档主要说明功能、认证、填充、握手服务器和版本能力，并没有发布国家级审查下的长期存活统计。因此，对它们给出“中高”而非“最高”抗封评分更严谨。
+
+八、最终推荐
+最优均衡方案
+TCP/443：VLESS + RAW + XTLS Vision + REALITY
+UDP/443：Hysteria2
+非443 TCP备用：AnyTLS
+
+
+理由：
+
+Reality 提供当前最成熟的主动探测处理和较低 TCP 开销。
+Hysteria2 补足 TCP 在高 RTT、高丢包线路中的弱点。
+AnyTLS 提供独立于 Reality 的第二种 TCP/TLS 技术路线。
+三者不是简单重复，故障域和网络适用面不同。
+偏稳健、不希望 UDP 过于激进
+TCP/443：VLESS + Reality
+UDP/443：TUIC v5
+非443 TCP：SS 2022 + ShadowTLS v3
+
+
+TUIC 默认 cubic 比 Brutal 更接近传统拥塞控制逻辑；ShadowTLS + SS 2022 则提供轻量异构 TCP 备用。应关闭 TUIC 0-RTT，以避免收益有限但增加重放风险。
+
+有旧客户端或必须经过传统 CDN
+主入口：VLESS + Reality
+性能备用：Hysteria2
+兼容入口：Trojan + TLS
+CDN入口：VLESS + WebSocket + TLS
+
+
+只有客户端确实不支持现代协议时，才保留 VMess + WS + TLS。裸 VMess 和裸 Shadowsocks 不应成为新节点的长期主入口。
+
+九、一句话结论
+443/TCP 第一选择：VLESS + Vision + REALITY。
+443/UDP 第一选择：Hysteria2，TUIC 为备用。
+非 443 TCP：Reality、AnyTLS、SS 2022 + ShadowTLS v3。
+非 443 UDP：Hysteria2 或 TUIC。
+NAT IPv4 必须先确认 TCP/UDP 映射类型，端口号本身不代表安全。
+不要把裸加密、QUIC 或某个新协议理解成“永不被封”。
+最佳策略是 TCP/TLS 型入口和 UDP/QUIC 型入口并存，而不是押注单一协议。
