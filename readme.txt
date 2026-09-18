@@ -9778,3 +9778,1154 @@ CDN入口：VLESS + WebSocket + TLS
 NAT IPv4 必须先确认 TCP/UDP 映射类型，端口号本身不代表安全。
 不要把裸加密、QUIC 或某个新协议理解成“永不被封”。
 最佳策略是 TCP/TLS 型入口和 UDP/QUIC 型入口并存，而不是押注单一协议。
+
+
+IPv6 / IPv6-NAT64# IPv6/IPv6-NATv4 环境下 443 与非 443 代理协议及组合研究
+> 更新时间：2026-09-18
+> 说明：以下结论基于你提供的材料、协议官方文档、公开论文、项目仓库与社区报告综合整理。不同运营商、地区、IP 段、ASN、时段、流量规模和客户端实现会导致结果显著差异。
+> “抗封锁”不是单一指标，文中将其拆分为：被动识别、主动探测、端口/IP 韧性、性能、异构容灾价值和公开打击证据。
+----------------------------------------
+1. 核心结论
+1.1 最合理的不是寻找“无敌协议”，而是构建异构入口
+建议至少覆盖以下故障域：
+TCP / 443
+├── VLESS + REALITY + Vision
+└── NaiveProxy / XHTTP / AnyTLS 等 TCP 备用
+TCP / 非 443
+├── AnyTLS
+├── ShadowTLS v3 + Shadowsocks 2022
+├── VLESS + XHTTP + TLS
+└── Trojan + TLS + fallback
+UDP / 443
+├── Hysteria2
+└── TUIC v5
+UDP / 非 443
+├── Hysteria2 + Port Hopping
+├── Hysteria2 + Salamander/Gecko
+└── AmneziaWG
+研究型冷备
+├── Mieru
+├── Restls + SS
+└── Juicity
+1.2 建议的最小生产矩阵
+入口 推荐组合 主要作用 TCP/IPv6:443 VLESS + REALITY + Vision 主力 TCP，性能高、生态成熟 UDP/IPv6:443 Hysteria2 默认 H3 模式 高 RTT、丢包、移动网络、高吞吐 TCP/IPv6:8443 AnyTLS 与 REALITY 不同的 TCP/TLS 备用 TCP/IPv6:2053/8443 ShadowTLS v3 + SS2022 低资源、异构 TCP 备用 TCP/IPv6:8443 VLESS + XHTTP + TLS HTTP 原生承载、反代/CDN 适配 UDP/IPv6:高端口范围 Hysteria2 + Port Hopping 对抗单 UDP 端口封锁/限速 UDP/IPv6:高端口 AmneziaWG 非 QUIC 的 UDP/WireGuard 异构路线 TCP/IPv6:高端口 Mieru / Restls + SS 研究型、冷备型异构入口
+1.3 最重要的判断
+ * IPv6 不等于更抗封锁：IPv6 仍可被进行 DNS、SNI、TLS、QUIC、主动探测、IP/前缀和行为分析。
+ * 443 不等于绝对安全：443 的正常背景流量最大，但也是审查投入最集中的端口。
+ * 非 443 不等于更隐蔽：可以规避部分端口级策略，但非标准端口上的长期加密长连接也可能更异常。
+ * QUIC 不再是审查盲区：公开研究已证明 GFW 能解析 QUIC Initial 并读取其中的 ClientHello/SNI。
+ * 加密强度与流量隐蔽性是两回事：SS2022、WireGuard 等密码学很强，但裸流量不一定像正常 Web。
+ * 端口跳跃与流量混淆解决不同问题：
+ * Port Hopping：解决单端口封锁或限速；
+ * Salamander/Gecko：改变 QUIC 流量形状；
+ * 两者都不能解决整段 UDP、IP、SNI 或行为层封锁。
+----------------------------------------
+2. 评价指标
+2.1 P：被动识别防御
+抵抗以下分析的能力：
+ * TLS ClientHello/ServerHello 指纹；
+ * JA3/JA4 等 TLS 特征；
+ * QUIC Initial 与 SNI；
+ * 首包长度和包长序列；
+ * 熵、可打印字符比例；
+ * 上下行比例；
+ * 连接持续时间；
+ * 多路复用与重连行为；
+ * TLS-in-TLS 特征。
+2.2 A：主动探测防御
+面对审查设备的主动访问、错误握手、重放、错误密码和 HTTP 探针时：
+ * 是否返回合理的 TLS/HTTP 响应；
+ * 是否回落到真实站点；
+ * 是否静默丢弃；
+ * 是否暴露固定错误模式；
+ * 是否能防止代理协议被确认。
+2.3 R：端口/IP 韧性
+抵御以下策略的能力：
+ * 单端口封锁；
+ * 单端口限速；
+ * IP+端口封锁；
+ * UDP QoS；
+ * 短时 RST/丢包；
+ * 端口跳跃；
+ * 多地址切换。
+2.4 E：性能效率
+综合考虑：
+ * 握手 RTT；
+ * 单流吞吐；
+ * 多流吞吐；
+ * 高丢包表现；
+ * 多路复用；
+ * CPU/RAM；
+ * IPv6 MTU 敏感性；
+ * 移动网络和 NAT 兼容性。
+2.5 D：异构容灾价值
+与现有方案相比，是否使用了不同的：
+ * 传输层；
+ * TLS 实现；
+ * 代理数据层；
+ * HTTP/QUIC 行为；
+ * 前置方式；
+ * 地址和端口体系。
+2.6 T：公开打击证据
+不是“分数越高协议越差”，而是：
+ * 是否已有学术论文；
+ * 是否有 GFW Report 测量；
+ * 是否有重复的现场阻断报告；
+ * 是否有公开协议识别研究。
+----------------------------------------
+3. IPv6 环境的基础限制
+3.1 IPv6 不会隐藏协议特征
+IPv6 仍然暴露：
+ * 目标 IPv6 地址；
+ * TCP/UDP 端口；
+ * TLS SNI；
+ * QUIC Initial；
+ * TLS 指纹；
+ * 包长和时序；
+ * 连接行为；
+ * IP/前缀/ASN 信誉。
+IPv6 的主要工程优势是：
+ * 部分网络的 IPv6 路由策略不同；
+ * 可获得更大的地址空间；
+ * 可以在同一地址并行运行 TCP/443 与 UDP/443；
+ * 某些情况下具备更灵活的地址迁移和入口调度能力。
+但不能把 IPv6 地址空间等同于“无限抗封”。
+审查方可能按以下粒度处理：
+单个 /128
+小前缀
+/64
+/56
+ASN
+机房或路由段
+域名/SNI
+IP 与流量行为关联
+3.2 IPv6-only、双栈、NATv4 要区分
+IPv6-only 服务端
+适合直接运行：
+ * VLESS + REALITY；
+ * AnyTLS；
+ * Trojan；
+ * ShadowTLS；
+ * XHTTP；
+ * NaiveProxy；
+ * Mieru；
+ * Hysteria2；
+ * TUIC；
+ * AmneziaWG。
+但客户端必须有 IPv6 可达性。
+IPv6 + NATv4 出站
+主要影响服务端访问 IPv4-only 目标：
+ * DNS64/NAT64 是否可用；
+ * 应用是否优先解析 AAAA；
+ * 是否有双栈上游；
+ * IPv4 出口质量。
+它不改变入站协议的加密能力。
+NATv4 入站
+重点确认：
+ * 是否映射 TCP；
+ * 是否映射 UDP；
+ * 是否能映射多个端口；
+ * UDP 空闲超时；
+ * 是否为对称 NAT；
+ * 是否允许大范围 UDP 端口。
+如果只有一个 TCP 端口，优先：
+REALITY
+AnyTLS
+ShadowTLS + SS2022
+Trojan
+XHTTP
+NaiveProxy
+如果只有一个 UDP 端口，优先：
+Hysteria2
+TUIC
+AmneziaWG
+3.3 IPv6 MTU/PMTUD
+IPv6 中间路由器不负责分片，依赖：
+ * PMTUD；
+ * ICMPv6 Packet Too Big；
+ * 正确的 MSS/UDP payload；
+ * 中间设备放行 ICMPv6。
+常见症状：
+ * 能建立连接但打不开大网页；
+ * 小请求正常、大文件失败；
+ * QUIC 握手卡住；
+ * 视频断续；
+ * UDP 长连接不稳定。
+重点检查：
+ * 路径 MTU；
+ * TCP MSS；
+ * QUIC Initial 包大小；
+ * UDP payload；
+ * ICMPv6；
+ * 云厂商安全组；
+ * 回程路由。
+----------------------------------------
+4. TCP/443 协议与组合
+4.1 VLESS + REALITY + Vision
+结构
+IPv6
+ ↓
+TCP/443
+ ↓
+REALITY/TLS-like handshake
+ ↓
+VLESS
+ ↓
+Vision
+ ↓
+代理流量
+机制
+REALITY 负责外层 TLS 外观和目标站身份逻辑，VLESS 负责代理认证与承载，Vision 负责数据转发和部分 TLS-in-TLS 行为优化。
+REALITY 常见组合包括：
+ * RAW + Vision；
+ * XHTTP；
+ * gRPC。
+优点
+ * 性能高；
+ * CPU/RAM 开销低；
+ * 不一定需要常规公网证书；
+ * 客户端生态成熟；
+ * TCP/443 语义自然；
+ * 主动探测处理能力较强；
+ * 适合 IPv6 直连；
+ * 大文件和视频表现好。
+局限
+ * uTLS 模拟不等于真实浏览器；
+ * ClientHello 像 Chrome 不代表 TCP、TLS record、HTTP 行为也像 Chrome；
+ * IP reputation 无法由 REALITY 解决；
+ * 目标站、SNI、ALPN、端口和 IPv6 可达性需要自洽；
+ * 公开研究和现场报告显示它已进入持续攻防；
+ * TCP 在高丢包环境仍有队头阻塞。
+评价
+指标 评价 加密 很高 被动识别防御 高 主动探测防御 高 性能 很高 IPv6 适配 很高 异构价值 已有 REALITY 时新增较低 公开打击证据 中高
+定位
+> 最适合作为 TCP/443 主力，但不建议作为唯一入口。
+----------------------------------------
+4.2 VLESS + XHTTP + REALITY
+机制
+XHTTP 是 HTTP 化承载层，支持：
+ * HTTP/1.1；
+ * HTTP/2；
+ * HTTP/3；
+ * packet-up；
+ * stream-up；
+ * stream-one；
+ * header padding；
+ * XMUX；
+ * 上下行分离；
+ * 反代/CDN 适配。
+优点
+ * HTTP 生态兼容性强；
+ * 可改变传统长连接代理形态；
+ * 对中间盒和反向代理更友好；
+ * 可以承载多路流；
+ * 支持多种上行/下行模式；
+ * 可与 REALITY 组合。
+局限
+ * 配置复杂；
+ * 版本演进快；
+ * 客户端与服务端兼容性要求高；
+ * 某些模式的性能不如 RAW/Vision；
+ * XHTTP + REALITY 与现有 REALITY 仍共享 Xray/VLESS/REALITY 故障域；
+ * 如果使用 H3，会重新进入 UDP/QUIC 审查范围；
+ * 2026 年已有兼容性、内存和连接异常的现场 issue，但尚不足以证明协议被完全破解。
+评价
+指标 评价 加密 很高 被动识别防御 高到很高 主动探测防御 高，依赖前端 性能 高 IPv6 适配 很高 异构价值 TLS 版高，REALITY 版中等 公开打击证据 中
+定位
+> 有域名、真实网站、反向代理或 CDN 需求时的现代 HTTP 备用。
+----------------------------------------
+4.3 VLESS + XHTTP + 标准 TLS + Fallback
+这是比 XHTTP + REALITY 更有异构价值的组合。
+IPv6
+ ↓
+TCP/443 或 TCP/8443
+ ↓
+标准 TLS
+ ↓
+XHTTP
+ ↓
+VLESS
+ ↓
+真实网站/Fallback
+优点
+ * 与 REALITY 使用不同外层；
+ * 可使用真实证书；
+ * 可接 Nginx/Caddy；
+ * 可接支持 HTTP 的 CDN；
+ * 适合 HTTP/2 和多路复用；
+ * 对企业网/中间盒兼容性较好。
+局限
+ * 需要域名和证书；
+ * 证书、DNS、SNI、IP 存在关联风险；
+ * 非 443 会降低浏览器默认访问的自然性；
+ * HTTP 代理行为不等于真实浏览器行为；
+ * CDN 可能限制长连接、上传和大流量。
+定位
+> 有真实 Web 站点和域名时，适合做 TCP/443 或 TCP/8443 备用。
+----------------------------------------
+4.4 NaiveProxy + HTTP/2 + Caddy/前端
+机制
+NaiveProxy 的核心不是简单伪造一个 ClientHello，而是尽量复用 Chromium 网络栈：
+ * Chromium TLS 行为；
+ * HTTP/2；
+ * 多路复用；
+ * padding/fragmentation；
+ * application fronting；
+ * 真实网站前端。
+优点
+ * 浏览器 TLS/HTTP 行为真实性高；
+ * 443/TCP 语义自然；
+ * 未认证访问可以回落到真实网站；
+ * 与 REALITY 完全不同；
+ * 主动探测时前端可返回正常 Web 内容。
+局限
+ * 资源开销通常高于 REALITY；
+ * 需要持续跟随 Chromium 版本；
+ * 客户端生态较小；
+ * 仍暴露域名、SNI、IP 和连接行为；
+ * HTTP/3/QUIC 模式继承 QUIC 审查面；
+ * 在非 443 上，Chrome 访问高端口的自然性下降。
+评价
+指标 评价 加密 很高 被动识别防御 很高 主动探测防御 很高，前端正确时 性能 中高 资源效率 中 IPv6 适配 很高 异构价值 很高 公开打击证据 中
+定位
+> 自有域名、真实网站、重视浏览器行为真实性时，最值得研究的 TCP/443 方案之一。
+----------------------------------------
+4.5 Trojan + TLS + Fallback
+机制
+TCP/443 或 TCP/8443
+ ↓
+TLS
+ ↓
+Trojan authentication
+ ↓
+代理
+认证失败
+ ↓
+真实网站
+优点
+ * 协议成熟；
+ * 客户端覆盖广；
+ * 资源消耗低；
+ * 主动探测回落逻辑直观；
+ * IPv6 和非 443 适配都好。
+局限
+ * 普通 TLS 指纹可能被研究；
+ * 长连接行为、包长和上下行比例仍可能异常；
+ * TLS 外层自然不代表内层代理流量像普通浏览；
+ * 新部署的隐蔽性通常不如 Naive/XHTTP/REALITY 组合。
+定位
+> 传统、稳定、易维护的兼容入口。
+----------------------------------------
+4.6 AnyTLS + TLS
+机制
+TLS
+ ↓
+认证
+ ↓
+Session
+ ↓
+Multiplex
+ ↓
+Stream
+ ↓
+Padding/Waste
+AnyTLS 的重要特征是：
+ * session multiplex；
+ * 可变 padding scheme；
+ * 包长模式控制；
+ * 空闲会话；
+ * 连接复用；
+ * 试图降低 TLS-in-TLS 特征。
+优点
+ * 与 REALITY 传输路线不同；
+ * 适合 TCP/8443；
+ * 复用和短连接效率较好；
+ * 可通过改变 padding scheme 应对固定特征；
+ * sing-box、mihomo 等已有支持；
+ * IPv6/NATv4 TCP 入口适应性好。
+局限
+ * ClientHello/ServerHello 指纹并非 AnyTLS 单独解决；
+ * 新协议，长期中国实测不足；
+ * 默认 padding 不代表永远不可识别；
+ * 主动探测防御依赖 TLS、fallback 和实际部署；
+ * UDP-over-TCP 会有队头阻塞。
+评价
+指标 评价 加密 很高 被动识别防御 高 主动探测防御 中高到高，依赖部署 TCP 性能 高 UDP 性能 较低 IPv6 适配 很高 异构价值 很高 公开打击证据 较少
+定位
+> 最值得部署的 TCP/非443 异构备用之一。
+----------------------------------------
+4.7 ShadowTLS v3 + Shadowsocks 2022
+结构
+TCP/443、8443 或 2053
+ ↓
+ShadowTLS v3
+ ↓
+Shadowsocks 2022
+ ↓
+代理
+优点
+ * 与 Xray/REALITY 技术栈不同；
+ * 外层 TLS 与内层 AEAD 解耦；
+ * SS2022 性能高；
+ * Rust 实现资源消耗较低；
+ * 适合小内存 VPS；
+ * 非 443 适配自然；
+ * v3 针对主动探测、认证、重放和劫持进行了改进。
+局限
+ * 已有 ServerFinished 长度等检测向量讨论；
+ * TLS 外层不等于内层行为完全像 Web；
+ * SS2022 本身不是 Web camouflage；
+ * 多层结构需正确配置；
+ * 长期中国公开实测不足。
+定位
+> 低配 VPS、Alpine/OpenRC 和真正异构 TCP 冷备的优选。
+----------------------------------------
+4.8 Restls + SS
+机制
+Restls 重点控制：
+ * TLS-in-TLS；
+ * 前几组数据包长度；
+ * 响应次数；
+ * padding；
+ * ClientHello 模拟；
+ * TLS 后早期行为。
+优点
+ * 可编程控制早期流量；
+ * 与 REALITY、Naive、AnyTLS 的设计理念不同；
+ * 研究 TLS-in-TLS 识别时非常有价值；
+ * 异构容灾价值高。
+局限
+ * 生态较小；
+ * 客户端覆盖有限；
+ * 脚本配置错误可能产生固定新指纹；
+ * 主要改善早期行为，不能隐藏长时间大流量的统计特征；
+ * 性能和维护性不如主流协议。
+定位
+> 研究型或冷备型，不宜作为唯一生产入口。
+----------------------------------------
+4.9 Mieru
+机制
+Mieru 不走 TLS/HTTPS 路线，采用：
+ * XChaCha20-Poly1305；
+ * 时间相关密钥；
+ * 随机 padding；
+ * 分段；
+ * low-entropy mode；
+ * heartbeat jitter；
+ * traffic pattern。
+优点
+ * 不依赖域名、证书和 SNI；
+ * 与 TLS/QUIC 体系完全不同；
+ * 支持 TCP/UDP；
+ * 支持 IPv6；
+ * 可以改变熵、包长和分段行为；
+ * 异构价值很高。
+局限
+ * 在 TCP/443 上不是标准 TLS；
+ * 非 TLS 高熵流量本身可能异常；
+ * low-entropy 会增加带宽和 CPU 开销；
+ * 公开中国大规模实测不足；
+ * 项目自身过去有被识别/阻断的历史报告；
+ * 适合非 443 冷备多于 443 主入口。
+定位
+> 完全不同于 TLS/QUIC 的研究型冷备，非 443 比 443 更合理。
+----------------------------------------
+5. UDP/443 与 UDP/非443
+5.1 Hysteria2 默认 HTTP/3 模式
+结构
+IPv6
+ ↓
+UDP/443
+ ↓
+QUIC/TLS
+ ↓
+Hysteria2
+优点
+ * 高 RTT、高丢包和移动网络性能强；
+ * QUIC 多路复用；
+ * 无 TCP 连接级队头阻塞；
+ * 适合 TCP/UDP relay；
+ * UDP/443 具有 HTTP/3 语义；
+ * 认证失败可表现为 HTTP/3 服务。
+局限
+ * QUIC Initial 可被解析；
+ * SNI 可能进入 QUIC 专用规则；
+ * UDP QoS 和整体封锁风险高；
+ * 用户态协议栈 CPU 开销高于内核 TCP；
+ * IPv6 MTU/PMTUD 敏感；
+ * 长时间高速流量仍可能被行为分析。
+定位
+> UDP/443 性能主力，不应被称作天然最隐蔽协议。
+----------------------------------------
+5.2 Hysteria2 + Port Hopping
+解决的问题
+某一个 UDP 端口被封锁或限速
+ ↓
+切换到端口池中的其他端口
+不能解决的问题
+ * 整体 UDP 被封；
+ * IP 被封；
+ * QUIC SNI 审查；
+ * 服务器域名被处理；
+ * 长期行为分析；
+ * NATv4 只提供一个 UDP 映射端口。
+IPv6 适用性
+公网 IPv6 下实现端口范围较容易，但必须确认：
+ * 云安全组；
+ * nftables/iptables；
+ * 客户端出站 UDP；
+ * 运营商高端口策略；
+ * 是否存在连续端口映射。
+----------------------------------------
+5.3 Salamander
+Salamander 会改变 QUIC 包外形，使其不再容易按标准 QUIC 解析。
+优点
+ * 可绕开依赖标准 QUIC 报文结构的设备；
+ * 适合高端口 UDP；
+ * 可与 Port Hopping 组合。
+风险
+ * 不再像正常 HTTP/3；
+ * UDP/443 上的高熵随机流量可能失去正常 H3 背景；
+ * 随机高熵本身也可能被分类；
+ * 不能解决全 UDP/IP 封锁。
+建议
+ * UDP/443：优先测试默认 H3 模式；
+ * UDP/高端口：Salamander 更容易与端口语义自洽；
+ * 不要默认认为启用后一定更强。
+----------------------------------------
+5.4 Gecko
+Gecko 在 QUIC 握手阶段增加：
+ * 随机分片；
+ * 随机大小；
+ * padding；
+ * 长头握手报文形状变化。
+优点
+ * 削弱 QUIC Initial 的长度和几何特征；
+ * 适合针对标准 QUIC 解析的设备。
+风险
+ * 较新；
+ * 实际大规模中国测量不足；
+ * 额外 CPU、延迟和 MTU 复杂度；
+ * 仍然是 UDP；
+ * 不一定更像正常 HTTP/3。
+定位
+> 实验性 QUIC 对抗策略，优先在高端口或特定网络中实测。
+----------------------------------------
+5.5 TUIC v5
+特点
+ * QUIC/TLS；
+ * 0-RTT；
+ * TCP/UDP relay；
+ * 多路复用；
+ * BBR/Cubic/New Reno；
+ * 连接迁移；
+ * UDP fragmentation。
+优点
+ * 高性能；
+ * 低延迟；
+ * 稳定网络表现优秀；
+ * 移动网络连接迁移有价值；
+ * 可作为 Hysteria2 的协议备用。
+局限
+ * 与 Hysteria2 共享 QUIC/UDP 审查面；
+ * 不能视为 UDP 被封后的真正备用；
+ * 标准 QUIC 形态更容易进入 QUIC 专项解析；
+ * 0-RTT 有重放风险，通常建议关闭。
+定位
+> 第二个 QUIC 实现，而不是第二个网络栈。
+----------------------------------------
+5.6 Juicity
+Juicity 也属于 QUIC/TLS 高性能路线，IPv4/IPv6、TCP/UDP relay 支持较完整。
+优点
+ * QUIC 多路复用；
+ * 性能较高；
+ * 可作为 Hysteria2/TUIC 之外的兼容备用。
+局限
+ * 生态较小；
+ * 同样继承 QUIC Initial/SNI 审查；
+ * 公开中国长期测量不足。
+定位
+> 研究或第三 QUIC 备用。
+----------------------------------------
+5.7 AmneziaWG
+原生 WireGuard 的问题
+WireGuard 具有：
+ * 高性能；
+ * 强加密；
+ * IPv6 支持；
+ * 固定握手和包结构。
+固定包头、握手长度和时序使原生 WireGuard 容易被分类。
+AmneziaWG 的改进
+包括：
+ * junk packets；
+ * header protection；
+ * 动态包长；
+ * 协议签名；
+ * 时间随机化；
+ * 内容 padding；
+ * 包序列改变；
+ * 模拟其他协议的外观。
+优点
+ * 非 QUIC 的 UDP 异构路线；
+ * 性能高；
+ * 适合完整 VPN/TUN；
+ * 非 443 UDP 适配自然；
+ * IPv6/NATv4 技术上都可用。
+局限
+ * 不会变成标准 HTTPS；
+ * UDP/443 上可能不如高端口自然；
+ * 公开证据主要来自俄罗斯环境；
+ * 缺少中国 GFW 的长期独立测量；
+ * 统计随机化本身也可能形成固定指纹。
+定位
+> Hysteria2/TUIC 之外的 UDP 冷备，优先非443高端口。
+----------------------------------------
+6. Shadowsocks 2022 裸协议
+优点
+ * AEAD 现代；
+ * CPU 开销低；
+ * TCP/UDP 支持；
+ * 客户端生态广；
+ * 适合内网、低审查或 ShadowTLS 内层。
+缺点
+ * 裸流量通常是高熵；
+ * 没有 Web/TLS 外观；
+ * 不能抵御主动探测的全部问题；
+ * 443 上尤其不自然；
+ * 换端口不能解决流量分类。
+定位
+> 适合作为数据层或低对抗备用，不适合作为高审查环境的唯一公网入口。
+----------------------------------------
+7. 其他可纳入的协议
+7.1 MASQUE / CONNECT-UDP / CONNECT-IP
+优点
+ * IETF 标准化；
+ * 通过 HTTP/2/HTTP/3 承载 UDP/IP；
+ * 协议语义比自定义“伪装 HTTP”更自然；
+ * 支持 IPv4、IPv6 和域名目标；
+ * 适合未来系统级代理和企业代理生态。
+局限
+ * 标准化不等于抗封锁；
+ * SNI、域名、IP 和认证仍可被处理；
+ * 自建客户端生态小；
+ * 部署复杂；
+ * 公共云/CDN 不一定支持任意 CONNECT-UDP。
+定位
+> 长期标准化方向，当前更偏研究和基础设施场景。
+----------------------------------------
+7.2 Tor WebTunnel
+优点
+ * 进入 HTTPS/Web 生态；
+ * 主动探测时可回到普通 Web 服务；
+ * 提供 Tor 的匿名性，而普通代理通常不提供。
+局限
+ * 性能低于普通代理；
+ * 依赖 Tor 生态；
+ * 配置和客户端体验更复杂；
+ * 不适合作为大带宽下载方案。
+定位
+> 匿名性优先，而不是性能优先。
+----------------------------------------
+7.3 obfs4
+优点
+ * Tor 生态成熟；
+ * 主动探测防御思路较好；
+ * 不暴露标准协议。
+局限
+ * 随机高熵流量可能成为分类对象；
+ * 性能一般；
+ * 不适合作为普通代理的高性能主力。
+----------------------------------------
+7.4 VLESS/VMess + WebSocket/gRPC + TLS
+适合
+ * 传统 CDN；
+ * 旧客户端；
+ * 已有反向代理架构；
+ * 兼容性优先。
+不足
+ * WebSocket Upgrade 特征；
+ * gRPC content-type 和长连接特征；
+ * 多层 TLS/HTTP；
+ * 性能通常不如 RAW/Vision/XHTTP；
+ * 公开研究较充分。
+定位
+> 兼容入口，而不是 2026 年新建直连节点的优先路线。
+----------------------------------------
+8. 443 端口组合比较
+8.1 TCP/443 + UDP/443 可并行
+同一 IPv6 地址可以同时使用：
+TCP/443 → VLESS + REALITY + Vision
+UDP/443 → Hysteria2
+这是最有价值的双栈组合之一，因为：
+ * TCP 和 UDP 失败模式不同；
+ * TCP 适合通用网页、视频、下载；
+ * UDP 适合高 RTT、高丢包、实时业务；
+ * 不需要在同一传输层堆叠多个相似方案。
+8.2 443 组合表
+TCP/443 UDP/443 评价 REALITY + Vision Hysteria2 最均衡 REALITY + Vision TUIC 偏低延迟和稳定 QUIC XHTTP + REALITY Hysteria2 HTTP 化 TCP + UDP 性能 XHTTP + TLS Hysteria2 Web 生态 + 弱网性能 NaiveProxy H2 Hysteria2 浏览器拟态 + QUIC AnyTLS Hysteria2 全 sing-box 异构 ShadowTLS + SS2022 Hysteria2 低资源 + 高性能 UDP Trojan + TLS Hysteria2 老客户端兼容 REALITY + Vision AmneziaWG TCP + 非 QUIC UDP NaiveProxy H2 TUIC 双高仿真/QUIC 路线，但维护成本较高
+443 上不推荐
+ * 裸 SS2022；
+ * 裸 VMess；
+ * 原生 WireGuard；
+ * 没有 Web 前端的普通随机加密协议；
+ * 盲目把 Salamander/Gecko 当作默认最优；
+ * 在同一个监听端口上堆过多复杂协议分流。
+----------------------------------------
+9. 非 443 端口的建议
+9.1 TCP 端口选择
+较有 Web 生态的端口
+8443
+2053
+2083
+2087
+2096
+这些端口在全球 Web/CDN 生态中确实有 HTTPS 使用场景，但不代表中国网络会自动把它们视为正常 HTTPS。
+高端口
+20000–50000
+更适合：
+ * Hysteria2 Port Hopping；
+ * AmneziaWG；
+ * 研究型自定义协议；
+ * 临时冷备。
+不一定适合：
+ * 长时间高流量 TCP/TLS；
+ * 需要像浏览器一样的协议。
+不建议随意占用
+22
+3306
+6379
+53
+这些端口的业务语义过强，出现非对应协议时可能更异常。
+----------------------------------------
+9.2 非443 TCP 推荐
+端口 组合 定位 TCP/8443 AnyTLS 首选异构 TCP TCP/2053 ShadowTLS + SS2022 低资源成熟备用 TCP/8443 XHTTP + TLS HTTP 原生备用 TCP/8443 Trojan + fallback 传统稳定备用 TCP/8443 NaiveProxy H2 可用但自然性下降 TCP/18888/高端口 Mieru 非 TLS 冷备 TCP/高端口 Restls + SS 研究型冷备
+9.3 非443 UDP 推荐
+组合 主要作用 Hysteria2 + Port Hopping 单端口 QoS/封锁 Hysteria2 + Salamander 改变 QUIC 包形状 Hysteria2 + Gecko 握手分片和 padding TUIC 第二 QUIC 实现 AmneziaWG 非 QUIC UDP 异构 Juicity 第三 QUIC 备用
+----------------------------------------
+10. IPv6/NATv4 场景组合
+10.1 只有 TCP 映射
+优先级：
+ 1. VLESS + REALITY + Vision；
+ 2. AnyTLS；
+ 3. ShadowTLS v3 + SS2022；
+ 4. VLESS + XHTTP + TLS；
+ 5. Trojan + TLS；
+ 6. NaiveProxy；
+ 7. WebSocket/gRPC + TLS；
+ 8. Mieru/Restls 冷备。
+10.2 TCP 与 UDP 映射同一数字端口
+可以：
+TCP/映射端口 → REALITY
+UDP/映射端口 → Hysteria2
+或者：
+TCP/映射端口 → AnyTLS
+UDP/映射端口 → TUIC
+TCP 与 UDP 使用相同数字端口并不冲突。
+10.3 只有 UDP 映射
+优先级：
+ 1. Hysteria2；
+ 2. AmneziaWG；
+ 3. TUIC；
+ 4. Juicity；
+ 5. 原生 WireGuard，仅适合低审查网络。
+10.4 NAT 不固定或 UDP 映射变化
+Hysteria2 Realm/STUN 可以研究，但：
+ * 受 NAT 类型影响；
+ * 需要双方协同；
+ * 不等于固定公网端口；
+ * 不适合作为唯一生产入口；
+ * 端口跳跃在只有单一 NAT 映射时通常不可用。
+----------------------------------------
+11. 加密、混淆、抗封锁和效率总表
+组合 加密 被动识别防御 主动探测 性能 弱网 端口/IP 韧性 异构价值 公开打击证据 REALITY + Vision 很高 高 高 很高 中 中 基准 中高 XHTTP + REALITY 很高 高 高 高 中高 中 中 中 XHTTP + TLS/Fallback 很高 高 高 高 中高 中 高 中 NaiveProxy H2 很高 很高 很高 中高 中 中 很高 中 AnyTLS 很高 高 中高 高 中 中 很高 较少 ShadowTLS + SS2022 很高 高 高 高 中 中 很高 中 Trojan + TLS 很高 中高 高 高 中 中 中高 中高 Restls + SS 很高 设计上很高 高 中 中 中 很高 少 Mieru 很高 中高到高 中高 高 中 中 很高 少 Hysteria2 默认 很高 中高 中高 很高 很高 高，限单端口 高 高 Hysteria2 + Salamander 很高 中高 中 很高 高 高，限单端口 高 高 Hysteria2 + Gecko 很高 中高到高 中 高 高 高，限单端口 高 高 TUIC v5 很高 中 中 很高 高 中 中 高 Juicity 很高 中 中 高 高 中 中 高 AmneziaWG 很高 中高 中 很高 高 中高 很高 中国证据不足 裸 SS2022 很高 低到中 中 很高 中 中 中 高 原生 WireGuard 很高 低 低 很高 高 中 高 高 VMess/SS 裸流 高 低 低到中 高 中 中 低 高
+----------------------------------------
+12. 当前公开打击力度
+12.1 证据最强：裸随机加密流量
+公开研究表明，GFW 曾使用：
+ * 熵；
+ * 比特比例；
+ * 可打印字符比例；
+ * 首包长度；
+ * 常见协议豁免；
+ * 主动探测；
+识别 Shadowsocks、VMess、Obfs4 等完全加密流量。
+因此：
+加密强
+≠
+流量隐蔽
+裸 SS2022、裸 VMess、obfs4 的密码学可能没问题，但“随机本身”可以成为类别特征。
+12.2 证据最明确：QUIC SNI 审查
+2025 年 USENIX Security 研究确认：
+QUIC Initial
+ ↓
+根据公开初始字段解密
+ ↓
+读取 TLS ClientHello/SNI
+ ↓
+QUIC 专用规则
+ ↓
+后续 UDP 丢包/阻断
+因此：
+ * Hysteria2；
+ * TUIC；
+ * Juicity；
+ * Naive QUIC；
+ * MASQUE H3；
+ * XHTTP H3；
+都共享 QUIC/UDP 这一公开审查面。
+但这不等于所有 QUIC 代理都会被精确识别，也不等于 Hysteria2 已被全面破解。
+12.3 证据中等：传统 TLS 代理
+已有公开研究和历史封锁：
+ * Trojan；
+ * VLESS；
+ * VMess；
+ * WebSocket + TLS；
+ * gRPC + TLS；
+ * 普通 Shadowsocks + TLS；
+ * 传统 TLS 隧道。
+主要攻击面包括：
+ * TLS ClientHello；
+ * ALPN；
+ * 证书/SNI；
+ * TLS-in-TLS；
+ * 首包长度；
+ * 长连接；
+ * IP reputation；
+ * 主动探测。
+12.4 证据较少：新协议
+包括：
+ * AnyTLS；
+ * Mieru 新版；
+ * Restls；
+ * Gecko；
+ * AmneziaWG 3.1；
+ * 新版 XHTTP；
+ * VLESS Encryption。
+公开资料少可能意味着：
+ * 协议较新；
+ * 研究者尚未充分测量；
+ * 主要使用量较小；
+ * 或暂未形成公开报告。
+不能直接推导“更抗封”。
+----------------------------------------
+13. 性能与资源效率
+13.1 大致性能定位
+场景 优先方案 正常网络、TCP 大流 REALITY + Vision 高 RTT/高丢包 Hysteria2 UDP 实时业务 Hysteria2、TUIC 稳定网络低延迟 TUIC、REALITY 多网页/大量小流 XHTTP、Naive、AnyTLS 低内存 VPS ShadowTLS + SS2022、Trojan、REALITY 全局 VPN/TUN AmneziaWG 研究流量整形 Restls、Mieru CDN/反代 XHTTP + TLS
+13.2 小内存 VPS
+通常较适合：
+ShadowTLS + shadowsocks-rust
+Trojan
+REALITY
+AnyTLS
+Mieru
+需要谨慎评估：
+NaiveProxy
+高并发 Hysteria2
+高并发 TUIC
+复杂 XHTTP 多路复用
+实际结果取决于：
+ * 并发数；
+ * 加密算法；
+ * 日志；
+ * padding；
+ * TLS session；
+ * 内核版本；
+ * 网卡中断；
+ * 上游带宽；
+ * 连接持续时间。
+13.3 TCP 与 QUIC
+项目 TCP/TLS QUIC 单流稳定下载 强 强 高丢包 队头阻塞 通常更好 多路复用 需要应用层 原生 CPU 通常较低 用户态协议栈较高 MTU 敏感性 较低 较高 移动网络迁移 一般 较好 企业网兼容 通常较好 UDP 可能受限 QUIC 专项审查 无 有
+----------------------------------------
+14. 地址、域名和 CDN
+14.1 直连方案
+适合：
+ * REALITY；
+ * Hysteria2；
+ * TUIC；
+ * AnyTLS；
+ * ShadowTLS；
+ * Mieru；
+ * AmneziaWG。
+优点：
+ * 延迟低；
+ * 结构简单；
+ * 不依赖 CDN；
+ * 不受 CDN 长连接限制。
+缺点：
+ * 源站 IP 直接暴露；
+ * IP reputation 风险更高；
+ * IP 被处理后需要更换地址或前置。
+14.2 CDN/反代方案
+适合：
+ * XHTTP + TLS；
+ * WebSocket + TLS；
+ * gRPC + TLS；
+ * 部分 Trojan/Naive HTTP 前端；
+ * WebTunnel。
+不适合普通 Web CDN 的：
+ * Hysteria2；
+ * TUIC；
+ * Juicity；
+ * WireGuard；
+ * AmneziaWG。
+普通 CDN 主要代理 HTTP/HTTPS，不等于任意 UDP 转发。
+14.3 CDN 的风险
+ * CDN 能看到连接元数据；
+ * 长连接和代理流量可能违反服务条款；
+ * 上传和大流量可能受限；
+ * CDN 仍可能因域名/SNI被处理；
+ * 源站与域名仍可关联；
+ * CDN 到源站未必是 IPv6；
+ * CDN 不一定能隐藏所有关联信息。
+----------------------------------------
+15. 真正的异构价值
+如果已经有：
+VLESS + REALITY + Vision
+那么新增方案的价值大致如下：
+新方案 与 REALITY 的差异 异构价值 同协议换端口 很小 低 XHTTP + REALITY transport 不同，但共享 REALITY/Xray 中 XHTTP + 标准 TLS HTTP 行为和外层体系不同 高 AnyTLS TLS session/padding 机制不同 很高 Trojan 传统 TLS/认证 中高 ShadowTLS + SS2022 TLS 外壳 + 独立 AEAD 数据层 很高 NaiveProxy Chromium/H2/frontend 很高 Restls 可编程 TLS 行为 很高 Mieru 无 TLS、自定义 AEAD/traffic pattern 很高 Hysteria2 UDP/QUIC 高 TUIC 仍是 UDP/QUIC 中 AmneziaWG UDP/WireGuard-derived 很高 裸 SS2022 独立 AEAD，但外观较弱 中
+----------------------------------------
+16. 推荐架构
+16.1 极简、低资源
+TCP/443 VLESS + REALITY + Vision
+TCP/8443 ShadowTLS v3 + SS2022
+UDP/443 Hysteria2
+适合：
+ * 小内存 VPS；
+ * Alpine/OpenRC；
+ * 低运维复杂度；
+ * 需要 TCP/TLS/UDP 三个故障域。
+16.2 兼顾隐蔽与异构
+TCP/443 VLESS + REALITY + Vision
+TCP/8443 AnyTLS
+TCP/2053 ShadowTLS v3 + SS2022
+TCP/8443 VLESS + XHTTP + TLS + fallback
+UDP/443 Hysteria2
+UDP/高端口 Hysteria2 + Port Hopping
+UDP/高端口 AmneziaWG
+不一定全部同时承载用户，可作为不同恢复入口。
+16.3 重视浏览器行为
+TCP/443 NaiveProxy + HTTP/2 + Caddy/真实网站
+TCP/8443 VLESS + XHTTP + TLS
+TCP/2053 ShadowTLS + SS2022
+UDP/443 Hysteria2
+适合：
+ * 有域名和证书；
+ * 能维护真实网站；
+ * 接受较高资源和维护成本。
+16.4 研究型异构池
+TCP/443 REALITY + Vision
+TCP/8443 AnyTLS
+TCP/2053 ShadowTLS + SS2022
+TCP/18888 Mieru
+TCP/高端口 Restls + SS
+UDP/443 Hysteria2
+UDP/高端口 AmneziaWG
+UDP/8443 TUIC
+适合作为实验和冷备，不建议把所有协议都作为日常主力。
+----------------------------------------
+17. 推荐排序
+17.1 TCP/443
+性能优先
+ 1. VLESS + REALITY + Vision；
+ 2. VLESS + XHTTP + REALITY；
+ 3. Trojan + TLS；
+ 4. AnyTLS；
+ 5. NaiveProxy；
+ 6. XHTTP + TLS/CDN。
+浏览器拟态优先
+ 1. NaiveProxy + HTTP/2 + 真实前端；
+ 2. VLESS + REALITY + Vision；
+ 3. XHTTP + TLS + 真实 fallback；
+ 4. AnyTLS；
+ 5. Trojan。
+异构容灾优先
+ 1. NaiveProxy；
+ 2. AnyTLS；
+ 3. ShadowTLS + SS2022；
+ 4. XHTTP + 标准 TLS；
+ 5. Mieru；
+ 6. Restls。
+17.2 UDP/443
+ 1. Hysteria2 默认 H3；
+ 2. Hysteria2 + Chrome QUIC/Gecko，视网络测试；
+ 3. TUIC v5；
+ 4. Juicity；
+ 5. Naive QUIC；
+ 6. MASQUE H3。
+17.3 非443 TCP
+ 1. AnyTLS/8443；
+ 2. ShadowTLS + SS2022/2053 或 8443；
+ 3. XHTTP + TLS/8443；
+ 4. Trojan + fallback/8443；
+ 5. Naive H2/8443；
+ 6. Mieru/高端口；
+ 7. Restls + SS/高端口。
+17.4 非443 UDP
+ 1. Hysteria2 + Port Hopping；
+ 2. Hysteria2 + Salamander/Gecko；
+ 3. AmneziaWG；
+ 4. TUIC；
+ 5. Juicity；
+ 6. 原生 WireGuard，仅低审查网络。
+----------------------------------------
+18. 建议的实测矩阵
+公开评分不能替代本地测试。建议在同一服务器、同一带宽和同一时间条件下测试。
+18.1 网络环境
+至少覆盖：
+ * 中国电信；
+ * 中国联通；
+ * 中国移动；
+ * 家庭宽带；
+ * 移动蜂窝；
+ * 校园/企业网络；
+ * IPv6-only；
+ * IPv4-only；
+ * NAT64/464XLAT；
+ * 海外探针。
+18.2 连通性
+记录：
+ * DNS/AAAA 延迟；
+ * TCP SYN 成功率；
+ * TCP RTT；
+ * TLS 握手 RTT；
+ * QUIC Initial 成功率；
+ * UDP 首包丢失；
+ * IPv4/IPv6 分开统计；
+ * 443、8443、2053、高端口分别统计。
+18.3 性能
+测试：
+ * 单流下载；
+ * 多流下载；
+ * 上行；
+ * 下行；
+ * 短连接；
+ * 长连接；
+ * 100/500/1000 并发；
+ * TCP 与 UDP relay；
+ * 视频、网页、SSH、会议和大文件。
+记录：
+ * p50/p95/p99 延迟；
+ * 单流和总吞吐；
+ * CPU；
+ * RSS；
+ * 文件描述符；
+ * 重传；
+ * QUIC stream reset；
+ * TCP retransmission；
+ * 建连失败率。
+18.4 弱网
+模拟：
+丢包：0.5%、1%、3%、5%
+RTT：20、80、150、250 ms
+MTU：1280、1300、1350、1400、1500
+重点测试：
+ * Hysteria2；
+ * TUIC；
+ * XHTTP；
+ * Naive H2；
+ * Mieru；
+ * AmneziaWG。
+18.5 长期观察
+至少观察：
+24 小时
+72 小时
+7 天
+记录：
+ * 是否出现单向阻断；
+ * 是否出现端口级限速；
+ * 是否出现 IP 级故障；
+ * 是否出现 SNI 特定失败；
+ * 是否出现 ISP 特定失败；
+ * 同一 IP 上不同协议是否同时失效；
+ * 换端口后是否恢复；
+ * 换 IPv6 地址后是否恢复；
+ * 是否出现连接数、内存或文件描述符异常增长。
+----------------------------------------
+19. 最终收敛建议
+推荐的最小方案
+主力 TCP/IPv6:443
+VLESS + REALITY + Vision
+主力 UDP/IPv6:443
+Hysteria2
+TCP/IPv6:8443
+AnyTLS
+TCP/IPv6:2053
+ShadowTLS v3 + Shadowsocks 2022
+有域名和真实站点时增加
+TCP/IPv6:8443
+VLESS + XHTTP + TLS + fallback
+TCP/IPv6:443
+NaiveProxy + HTTP/2 + Caddy
+UDP 需要额外异构时增加
+UDP/IPv6:高端口范围
+Hysteria2 + Port Hopping
+UDP/IPv6:高端口
+AmneziaWG
+研究型冷备
+TCP/IPv6:高端口
+Mieru
+TCP/IPv6:高端口
+Restls + SS
+----------------------------------------
+20. 最终结论
+443/TCP
+ * 性能和成熟度优先：VLESS + REALITY + Vision；
+ * 浏览器行为真实性优先：NaiveProxy + HTTP/2；
+ * HTTP/反代/CDN 优先：VLESS + XHTTP + TLS；
+ * 异构 TCP 优先：AnyTLS 或 ShadowTLS + SS2022。
+443/UDP
+ * 性能、弱网和移动网络：Hysteria2；
+ * 第二个 QUIC 实现：TUIC；
+ * QUIC 之外的 UDP 冷备：AmneziaWG。
+非443/TCP
+ * 首选：AnyTLS/8443；
+ * 成熟异构：ShadowTLS + SS2022/2053；
+ * HTTP 原生：XHTTP + TLS/8443；
+ * 传统兼容：Trojan + fallback；
+ * 研究型：Mieru、Restls。
+非443/UDP
+ * 端口级韧性：Hysteria2 + Port Hopping；
+ * QUIC 流量形状变化：Salamander/Gecko；
+ * 非 QUIC 异构：AmneziaWG；
+ * 第二 QUIC：TUIC/Juicity。
+最合理的长期架构是：
+TCP/REALITY
++
+TCP/AnyTLS 或 ShadowTLS
++
+TCP/HTTP-native
++
+UDP/QUIC
++
+可选非 QUIC 冷备
+不要把以下等式当成事实：
+加密强 = 不可识别
+IPv6 = 不可封锁
+443 = 永不被端口级处理
+QUIC = DPI 看不见
+随机化 = 一定更隐蔽
+协议新 = 没有打击能力
+真正决定长期可用性的，是：
+协议特征
++
+TLS/QUIC 指纹
++
+SNI/DNS
++
+IP reputation
++
+端口策略
++
+IPv6 路由
++
+MTU/PMTUD
++
+运营商 QoS
++
+客户端实现
++
+长期连接行为
++
+多个异构入口
+因此，最终推荐不是“某个五星协议”，而是：
+> 用 REALITY/Naive/XHTTP/AnyTLS/ShadowTLS 覆盖不同 TCP/TLS 行为，用 Hysteria2/TUIC 覆盖 QUIC 性能路径，再用 AmneziaWG、Mieru 或 Restls 提供非 QUIC、非标准 TLS 的冷备。
